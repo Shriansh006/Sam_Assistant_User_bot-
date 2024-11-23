@@ -9,6 +9,7 @@ import pyperclip
 import os 
 import time
 import re
+import cv2
 
 
 def speak(text):
@@ -39,12 +40,12 @@ sys_msg = (
     'Make your response clear and concise, avoiding any verbosity.' 
 )
 
-convo=[{'role': 'system', 'content': sys_msg}]
+convo = [{'role': 'system', 'content': sys_msg}]
 
 generation_config = {
     'temperature': 0.7,
-    'top_p':1,
-    'top_k':1,
+    'top_p': 1,
+    'top_k': 1,
     "max_output_tokens": 2048
 }
 
@@ -64,14 +65,15 @@ whisper_model = WhisperModel(whisper_size, device='cpu', compute_type='int8', cp
 r = sr.Recognizer()
 source = sr.Microphone()
 
-def groq_prompt(prompt , img_context):
+web_cam = cv2.VideoCapture(0)
+
+def groq_prompt(prompt, img_context):
     if img_context:
-        prompt= f'USER PROMPT: {prompt}\n\n IMAGE CONTEXT: {img_context}'
-    convo.append({'role':'user', 'content': prompt})
-    chat_completion =groq_client.chat.completions.create(messages=convo , model='llama3-70b-8192')
+        prompt = f'USER PROMPT: {prompt}\n\n IMAGE CONTEXT: {img_context}'
+    convo.append({'role': 'user', 'content': prompt})
+    chat_completion = groq_client.chat.completions.create(messages=convo, model='llama3-70b-8192')
     response = chat_completion.choices[0].message
     convo.append(response)
-
     return response.content
 
 def function_call(prompt):
@@ -84,10 +86,10 @@ def function_call(prompt):
         'function call name exactly as I listed'
     )
 
-    function_convo = [{'role': 'system', 'content' : sys_msg}, 
-                    {'role':'user','content': prompt}]
+    function_convo = [{'role': 'system', 'content': sys_msg}, 
+                      {'role': 'user', 'content': prompt}]
     
-    chat_completion = groq_client.chat.completions.create(messages=function_convo , model='llama3-70b-8192')
+    chat_completion = groq_client.chat.completions.create(messages=function_convo, model='llama3-70b-8192')
     response = chat_completion.choices[0].message
 
     return response.content
@@ -96,7 +98,7 @@ def take_screenshot():
     path = "screenshot.jpg"
     screenshot = ImageGrab.grab()
     rgb_screenshot = screenshot.convert('RGB')
-    rgb_screenshot.save(path , quality=15)
+    rgb_screenshot.save(path, quality=15)
 
 def get_clipboard_text():
     clipboard_content = pyperclip.paste()
@@ -106,7 +108,20 @@ def get_clipboard_text():
         print("No Clipboard text to copy")
         return None
 
-def vision_prompt(prompt , photo_path):
+def web_cam_capture():
+    if not web_cam.isOpened():
+        print('Error: Camera did not open successfully')
+        return None
+    path = 'webcam.jpg'
+    ret, frame = web_cam.read()
+    if ret:
+        cv2.imwrite(path, frame)
+        return path
+    else:
+        print('Error: Unable to capture image from webcam')
+        return None
+
+def vision_prompt(prompt, photo_path):
     img = Image.open(photo_path)
     prompt = (
         'You are the vision analysis AI that provides semantic meaning from images to provide context'
@@ -143,13 +158,15 @@ def callback(recognizer, audio):
             paste = get_clipboard_text()
             clean_prompt = f'{clean_prompt} \n\n CLIPBOARD CONTENT: {paste}'
             visual_context = None
+        elif 'capture webcam' in call:
+            print('Capturing webcam.')
+            webcam_path = web_cam_capture()
+            visual_context = vision_prompt(prompt=clean_prompt, photo_path=webcam_path) if webcam_path else None
         else:
             visual_context = None
         
         response = groq_prompt(clean_prompt, visual_context)
         print(f'ASSISTANT: {response}')
-        
-        # Add TTS (speak the response)
         speak(response)
 
 def start_listening():
@@ -171,4 +188,8 @@ def extract_prompt(transcribed_text, wake_word):
     else:
         return None
 
+import atexit
+atexit.register(web_cam.release)
+
 start_listening()
+
